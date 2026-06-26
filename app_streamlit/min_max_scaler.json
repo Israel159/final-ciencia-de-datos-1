@@ -1,0 +1,246 @@
+{
+  "Global_active_power": {
+    "min": 0.12399999999999993,
+    "max": 6.560533333333334
+  },
+  "Global_reactive_power": {
+    "min": 0.021033333333333338,
+    "max": 0.682
+  },
+  "Global_reactive_power_log": {
+    "min": 0.020815186380585635,
+    "max": 0.5199835615507563
+  },
+  "Voltage": {
+    "min": 225.83450000000002,
+    "max": 250.3425000000001
+  },
+  "Global_intensity": {
+    "min": 0.503333333333333,
+    "max": 28.38333333333333
+  },
+  "Sub_metering_1": {
+    "min": 0.0,
+    "max": 2902.0
+  },
+  "Sub_metering_1_log": {
+    "min": 0.0,
+    "max": 7.97349996402463
+  },
+  "Sub_metering_2": {
+    "min": 0.0,
+    "max": 2786.0
+  },
+  "Sub_metering_2_log": {
+    "min": 0.0,
+    "max": 7.932721027481948
+  },
+  "Sub_metering_3": {
+    "min": 0.0,
+    "max": 1207.0
+  },
+  "Sub_metering_3_log": {
+    "min": 0.0,
+    "max": 7.0967213784947605
+  },
+  "Unmetered_energy": {
+    "min": 82.76666666666677,
+    "max": 3890.233333333334
+  },
+  "GAP_ma24h": {
+    "min": 0.17294722222222222,
+    "max": 5.452533333333332
+  },
+  "GAP_ma168h": {
+    "min": 0.17888472222222226,
+    "max": 5.452533333333332
+  },
+  "GAP_std24h": {
+    "min": 0.0,
+    "max": 1.8301955241147136
+  },
+  "SM3_ma24h": {
+    "min": 0.0,
+    "max": 1034.75
+  },
+  "GAP_diff1h": {
+    "min": -4.563033333333334,
+    "max": 3.761166666666666
+  },
+  "GAP_diff24h": {
+    "min": -6.037033333333334,
+    "max": 5.456200000000001
+  },
+  "GAP_diff168h": {
+    "min": -6.054033333333334,
+    "max": 5.382133333333334
+  },
+  "Global_active_power_lag1h": {
+    "min": 0.12399999999999993,
+    "max": 6.560533333333334
+  },
+  "Global_active_power_lag2h": {
+    "min": 0.12399999999999993,
+    "max": 6.560533333333334
+  },
+  "Global_active_power_lag3h": {
+    "min": 0.12399999999999993,
+    "max": 6.560533333333334
+  },
+  "Global_active_power_lag6h": {
+    "min": 0.12399999999999993,
+    "max": 6.560533333333334
+  },
+  "Global_active_power_lag12h": {
+    "min": 0.12399999999999993,
+    "max": 6.560533333333334
+  },
+  "Global_active_power_lag24h": {
+    "min": 0.12399999999999993,
+    "max": 6.560533333333334
+  },
+  "Global_active_power_lag168h": {
+    "min": 0.12399999999999993,
+    "max": 6.560533333333334
+  },
+  "Sub_metering_3_lag1h": {
+    "min": 0.0,
+    "max": 1207.0
+  },
+  "Sub_metering_3_lag2h": {
+    "min": 0.0,
+    "max": 1207.0
+  },
+  "Sub_metering_3_lag3h": {
+    "min": 0.0,
+    "max": 1207.0
+  },
+  "Sub_metering_3_lag6h": {
+    "min": 0.0,
+    "max": 1207.0
+  },
+  "Sub_metering_3_lag12h": {
+    "min": 0.0,
+    "max": 1207.0
+  },
+  "Sub_metering_3_lag24h": {
+    "min": 0.0,
+    "max": 1207.0
+  },
+  "Sub_metering_3_lag168h": {
+    "min": 0.0,
+    "max": 1207.0
+  },
+  "Voltage_lag1h": {
+    "min": 225.83450000000002,
+    "max": 250.3425000000001
+  },
+  "Voltage_lag2h": {
+    "min": 225.83450000000002,
+    "max": 250.3425000000001
+  },
+  "Voltage_lag3h": {
+    "min": 225.83450000000002,
+    "max": 250.3425000000001
+  },
+  "Voltage_lag6h": {
+    "min": 225.83450000000002,
+    "max": 250.3425000000001
+  },
+  "Voltage_lag12h": {
+    "min": 225.83450000000002,
+    "max": 250.3425000000001
+  },
+  "Voltage_lag24h": {
+    "min": 225.83450000000002,
+    "max": 250.3425000000001
+  },
+  "Voltage_lag168h": {
+    "min": 225.83450000000002,
+    "max": 250.3425000000001
+  },
+  "Global_reactive_power_lag1h": {
+    "min": 0.021033333333333338,
+    "max": 0.682
+  },
+  "Global_reactive_power_lag2h": {
+    "min": 0.021033333333333338,
+    "max": 0.682
+  },
+  "Global_reactive_power_lag3h": {
+    "min": 0.021033333333333338,
+    "max": 0.682
+  },
+  "Global_reactive_power_lag6h": {
+    "min": 0.021033333333333338,
+    "max": 0.682
+  },
+  "Global_reactive_power_lag12h": {
+    "min": 0.021033333333333338,
+    "max": 0.682
+  },
+  "Global_reactive_power_lag24h": {
+    "min": 0.021033333333333338,
+    "max": 0.682
+  },
+  "Global_reactive_power_lag168h": {
+    "min": 0.021033333333333338,
+    "max": 0.682
+  },
+  "Sub_metering_1_lag1h": {
+    "min": 0.0,
+    "max": 2902.0
+  },
+  "Sub_metering_1_lag2h": {
+    "min": 0.0,
+    "max": 2902.0
+  },
+  "Sub_metering_1_lag3h": {
+    "min": 0.0,
+    "max": 2902.0
+  },
+  "Sub_metering_1_lag6h": {
+    "min": 0.0,
+    "max": 2902.0
+  },
+  "Sub_metering_1_lag12h": {
+    "min": 0.0,
+    "max": 2902.0
+  },
+  "Sub_metering_1_lag24h": {
+    "min": 0.0,
+    "max": 2902.0
+  },
+  "Sub_metering_1_lag168h": {
+    "min": 0.0,
+    "max": 2902.0
+  },
+  "Sub_metering_2_lag1h": {
+    "min": 0.0,
+    "max": 2786.0
+  },
+  "Sub_metering_2_lag2h": {
+    "min": 0.0,
+    "max": 2786.0
+  },
+  "Sub_metering_2_lag3h": {
+    "min": 0.0,
+    "max": 2786.0
+  },
+  "Sub_metering_2_lag6h": {
+    "min": 0.0,
+    "max": 2786.0
+  },
+  "Sub_metering_2_lag12h": {
+    "min": 0.0,
+    "max": 2786.0
+  },
+  "Sub_metering_2_lag24h": {
+    "min": 0.0,
+    "max": 2786.0
+  },
+  "Sub_metering_2_lag168h": {
+    "min": 0.0,
+    "max": 2786.0
+  }
+}
