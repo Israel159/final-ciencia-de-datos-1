@@ -49,58 +49,41 @@ plain
 ---
 
 ## 🏗️ Pipeline del Proyecto
-┌─────────────────────────────────────────────────────────────────────────┐
-│  01. EXPLORACIÓN (PySpark)                                              │
-│     • Lectura de 2M+ registros con esquema explícito                   │
-│     • Análisis de nulos, outliers, distribuciones                      │
-│     • Visualización de patrones estacionales y cíclicos                │
-├─────────────────────────────────────────────────────────────────────────┤
-│  02. PREPROCESAMIENTO (PySpark + pandas híbrido)                        │
-│     • Imputación temporal (ffill/bfill)                                │
-│     • Agregación horaria (factor 60× de reducción)                     │
-│     • Ingeniería de features: lags, ventanas móviles, diferencias    │
-│     • Codificación cíclica (hora, día, mes)                            │
-│     • Escalado Min-Max [0,1] sin fuga de datos                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│  03-05. MODELADO (TensorFlow/Keras)                                     │
-│     • RNN:  2 capas SimpleRNN (64+32) — baseline                        │
-│     • LSTM: 2 capas LSTM (64+32) — memoria de largo plazo              │
-│     • GRU:  2 capas GRU (64+32) — eficiencia paramétrica               │
-│     • Tuning: Early stopping, ReduceLROnPlateau, dropout 20%           │
-├─────────────────────────────────────────────────────────────────────────┤
-│  06. COMPARACIÓN                                                        │
-│     • Métricas: MAE, RMSE, R² en test set temporal (2010)             │
-│     • Selección del modelo ganador por R²                               │
-├─────────────────────────────────────────────────────────────────────────┤
-│  DASHBOARD (Streamlit)                                                  │
-│     • Visualización interactiva de datos históricos                    │
-│     • Predicciones futuras 24h y 168h                                  │
-│     • Comparación de modelos con métricas y justificación              │
-└─────────────────────────────────────────────────────────────────────────┘
-plain
 
----
+| Etapa | Archivo | Descripcion |
+|-------|---------|-------------|
+| 01 | `01_exploracion_pyspark.ipynb` | EDA con PySpark sobre 2M+ registros |
+| 02 | `02_preprocesamiento.ipynb` | Limpieza, features, escalado |
+| 03 | `03_modelo_rnn.py` | Baseline SimpleRNN |
+| 04 | `04_modelo_lstm.py` | LSTM con memoria de largo plazo |
+| 05 | `05_modelo_gru.py` | GRU (ganador) |
+| 06 | `06_comparacion_modelos.ipynb` | Tabla comparativa y seleccion |
+| App | `app_streamlit/app.py` | Dashboard interactivo Streamlit |
 
-## 📁 Estructura del Repositorio
-├── 01_exploracion_pyspark.ipynb      # EDA con PySpark
-├── 02_preprocesamiento.ipynb         # Pipeline de limpieza y features
-├── 03_modelo_rnn.py                  # Baseline SimpleRNN
-├── 04_modelo_lstm.py                 # LSTM con memoria de largo plazo
-├── 05_modelo_gru.py                  # GRU (ganador)
-├── 06_comparacion_modelos.ipynb      # Tabla comparativa y selección
-├── app_streamlit/                    # Dashboard interactivo
-│   ├── app.py                        # Aplicación Streamlit
-│   ├── requirements.txt              # Dependencias del dashboard
-│   └── modelo_final/                 # Artefactos del modelo ganador
-│       ├── min_max_scaler.json       # Parámetros de escalado
-│       ├── pred_gru_24h.npy          # Predicciones pre-calculadas 24h
-│       ├── pred_gru_168h.npy         # Predicciones pre-calculadas 168h
-│       ├── metrics_gru.json          # Métricas de evaluación
-│       └── resumen_comparativa.json  # Justificación del ganador
-├── requirements.txt                  # Dependencias globales del proyecto
-├── .gitignore                        # Exclusión de datos y modelos grandes
-└── README.md                         # Este archivo
-plain
+**Flujo de datos:**
 
-> **Nota:** Los archivos de datos (`household_power_consumption.txt`, `preprocessed_data.zip`) y modelos entrenados (`*.keras`, `*.h5`) **no se incluyen en el repositorio** por tamaño. Descarga el dataset desde [Kaggle](https://www.kaggle.com/datasets/uciml/electric-power-consumption-data-set) y ejecuta los notebooks en orden.
 
+## 🏆 Resultados
+| Modelo    | MAE (kW)   | RMSE (kW)  | R²         | Épocas |
+| --------- | ---------- | ---------- | ---------- | ------ |
+| **RNN**   | 0.3508     | 0.5130     | 0.5638     | 26     |
+| **LSTM**  | 0.3360     | 0.4924     | 0.5981     | 25     |
+| **GRU** ⭐ | **0.3392** | **0.4918** | **0.5991** | **23** |
+
+Modelo ganador: GRU
+- Mayor R² (59.9% de variabilidad explicada)
+- Convergencia más rápida (23 épocas)
+- Eficiencia paramétrica superior a LSTM (~25-30% menos parámetros)
+
+## 🛠️ Tecnologías Utilizadas
+| Capa                 | Herramientas                         |
+| -------------------- | ------------------------------------ |
+| **Big Data**         | PySpark, Spark SQL, Window functions |
+| **Preprocesamiento** | pandas, numpy, Parquet               |
+| **Deep Learning**    | TensorFlow, Keras                    |
+| **Visualización**    | matplotlib, seaborn, plotly          |
+| **Dashboard**        | Streamlit                            |
+| **Evaluación**       | scikit-learn (MAE, RMSE, R²)         |
+
+## 📚 Referencias
+- Hebrail, G. & Berard, A. (2012). Individual Household Electric Power Consumption.
