@@ -1,6 +1,6 @@
 # 🔌 Predicción de Consumo Eléctrico Residencial con Deep Learning y Big Data
 
-[![Python](https://img.shields.io/badge/Python-3.9-blue.svg)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](https://python.org)
 [![PySpark](https://img.shields.io/badge/PySpark-3.5-orange.svg)](https://spark.apache.org)
 [![TensorFlow](https://img.shields.io/badge/TensorFlow-2.15-FF6F00.svg)](https://tensorflow.org)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.29-FF4B4B.svg)](https://streamlit.io)
