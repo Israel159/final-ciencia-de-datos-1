@@ -6,24 +6,23 @@ Dashboard de Predicción de Consumo Eléctrico — Streamlit
 Aplicación interactiva para visualizar datos, comparar modelos (RNN/LSTM/GRU),
 ejecutar predicciones futuras y mostrar métricas del modelo ganador (GRU).
 
-Desplegado en: Streamlit Cloud
+SOLUCIÓN DE COMPATIBILIDAD: El modelo se reconstruye manualmente desde JSON
+y los pesos se cargan desde .h5, evitando problemas de deserialización entre
+versiones de Keras/TensorFlow.
 """
-
-import os
-os.environ["TF_USE_LEGACY_KERAS"] = "1"  # ← FORZAR Keras 2 (compatible con TF 2.15)
 
 import streamlit as st
 import numpy as np
 import pandas as pd
 import json
-import pickle
+import os
 from datetime import datetime, timedelta
 
 import tensorflow as tf
-from tensorflow import keras
-import matplotlib.pyplot as plt
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import GRU, Dense, Dropout
+
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # ============================================================
 # CONFIGURACIÓN DE PÁGINA
@@ -36,40 +35,18 @@ st.set_page_config(
 )
 
 # ============================================================
-# RUTAS DE ARCHIVOS (relativas al directorio de la app)
+# RUTAS DE ARCHIVOS
 # ============================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-MODEL_PATH = os.path.join(BASE_DIR, "modelo_gru_final.keras")
+ARCHITECTURE_PATH = os.path.join(BASE_DIR, "modelo_gru_architecture.json")
+WEIGHTS_PATH = os.path.join(BASE_DIR, "modelo_gru_weights.weights.h5")
 SCALER_PATH = os.path.join(BASE_DIR, "min_max_scaler.json")
 RESUMEN_PATH = os.path.join(BASE_DIR, "resumen_comparativa.json")
 
 # ============================================================
-# CARGA DE RECURSOS (con cache para no recargar en cada interacción)
-# ============================================================
-@st.cache_resource
-def load_model():
-    """Carga el modelo GRU entrenado."""
-    return keras.models.load_model(MODEL_PATH)
-
-@st.cache_data
-def load_scaler():
-    """Carga los parámetros de escalado Min-Max."""
-    with open(SCALER_PATH, "r") as f:
-        return json.load(f)
-
-@st.cache_data
-def load_resumen():
-    """Carga el resumen comparativo de modelos."""
-    with open(RESUMEN_PATH, "r") as f:
-        return json.load(f)
-
-# ============================================================
 # FEATURE COLUMNS (reconstruidas desde el código de los notebooks)
 # ============================================================
-# Orden exacto en que se crearon en create_sequences()
-# scaled_cols se ordenan alfabéticamente + cyclic_cols ordenadas + IsWeekend
-
 SCALED_COLS = sorted([
     'Global_active_power_scaled',
     'Global_active_power_lag12h_scaled',
@@ -134,9 +111,8 @@ CYCLIC_COLS = [
 
 FEATURE_COLS = SCALED_COLS + CYCLIC_COLS + ['IsWeekend']
 
-LOOKBACK = 24  # horas de historia
+LOOKBACK = 24
 
-# Índices de variables clave para actualizar en forecasting
 TARGET_IDX = FEATURE_COLS.index('Global_active_power_scaled')
 HOUR_SIN_IDX = FEATURE_COLS.index('Hour_sin')
 HOUR_COS_IDX = FEATURE_COLS.index('Hour_cos')
@@ -147,11 +123,87 @@ MONTH_COS_IDX = FEATURE_COLS.index('Month_cos')
 LAG1_IDX = FEATURE_COLS.index('Global_active_power_lag1h_scaled') if 'Global_active_power_lag1h_scaled' in FEATURE_COLS else None
 
 # ============================================================
+# FUNCIÓN: RECONSTRUIR MODELO DESDE JSON + CARGAR PESOS
+# ============================================================
+@st.cache_resource
+def build_and_load_model():
+    """
+    Reconstruye la arquitectura GRU manualmente y carga los pesos desde .h5.
+    Esto evita problemas de deserialización entre versiones de Keras/TensorFlow.
+    """
+    # Verificar que los archivos existen
+    if not os.path.exists(ARCHITECTURE_PATH):
+        raise FileNotFoundError(f"No se encontró: {ARCHITECTURE_PATH}")
+    if not os.path.exists(WEIGHTS_PATH):
+        raise FileNotFoundError(f"No se encontró: {WEIGHTS_PATH}")
+
+    # Cargar arquitectura
+    with open(ARCHITECTURE_PATH, 'r') as f:
+        arch = json.load(f)
+
+    input_shape = tuple(arch['input_shape'])
+
+    # Reconstruir modelo secuencial
+    model = Sequential()
+
+    for i, layer in enumerate(arch['layers']):
+        if layer['type'] == 'GRU':
+            # Primera capa necesita input_shape
+            if i == 0:
+                model.add(GRU(
+                    units=layer['units'],
+                    activation=layer.get('activation', 'tanh'),
+                    return_sequences=layer.get('return_sequences', False),
+                    input_shape=input_shape,
+                    name=layer.get('name', f'gru_{i+1}')
+                ))
+            else:
+                model.add(GRU(
+                    units=layer['units'],
+                    activation=layer.get('activation', 'tanh'),
+                    return_sequences=layer.get('return_sequences', False),
+                    name=layer.get('name', f'gru_{i+1}')
+                ))
+
+        elif layer['type'] == 'Dropout':
+            model.add(Dropout(rate=layer['rate'], name=layer.get('name', f'dropout_{i+1}')))
+
+        elif layer['type'] == 'Dense':
+            model.add(Dense(
+                units=layer['units'],
+                activation=layer.get('activation', 'linear'),
+                name=layer.get('name', f'dense_{i+1}')
+            ))
+
+    # Compilar
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        loss='mse',
+        metrics=['mae']
+    )
+
+    # Cargar pesos
+    model.load_weights(WEIGHTS_PATH)
+
+    return model
+
+# ============================================================
+# CARGA DE RECURSOS
+# ============================================================
+@st.cache_data
+def load_scaler():
+    with open(SCALER_PATH, "r") as f:
+        return json.load(f)
+
+@st.cache_data
+def load_resumen():
+    with open(RESUMEN_PATH, "r") as f:
+        return json.load(f)
+
+# ============================================================
 # FUNCIONES AUXILIARES
 # ============================================================
-
 def apply_minmax_scaling(value, col_name, scaler_dict):
-    """Aplica escalado Min-Max a un valor individual."""
     params = scaler_dict[col_name.replace('_scaled', '')]
     min_val = params['min']
     max_val = params['max']
@@ -159,17 +211,12 @@ def apply_minmax_scaling(value, col_name, scaler_dict):
     return (value - min_val) / denom
 
 def inverse_minmax_scaling(scaled_value, col_name, scaler_dict):
-    """Invierte el escalado Min-Max."""
     params = scaler_dict[col_name.replace('_scaled', '')]
     min_val = params['min']
     max_val = params['max']
     return scaled_value * (max_val - min_val) + min_val
 
 def predict_future(model, last_sequence, n_steps, scaler_dict, start_dt):
-    """
-    Genera predicciones futuras iterativas (autoregresivas).
-    Actualiza variables cíclicas (hora, día de semana, mes) en cada paso.
-    """
     predictions_scaled = []
     current_seq = last_sequence.copy().astype(np.float32)
 
@@ -179,7 +226,6 @@ def predict_future(model, last_sequence, n_steps, scaler_dict, start_dt):
     current_dt = pd.to_datetime(start_dt)
 
     for step in range(n_steps):
-        # Predicción del siguiente paso
         pred = model.predict(
             current_seq.reshape(1, LOOKBACK, len(FEATURE_COLS)),
             verbose=0
@@ -187,7 +233,6 @@ def predict_future(model, last_sequence, n_steps, scaler_dict, start_dt):
         pred_val = pred[0, 0]
         predictions_scaled.append(pred_val)
 
-        # Avanzar 1 hora
         current_dt += pd.Timedelta(hours=1)
         h = current_dt.hour
         dow = (current_dt.weekday() + 2) % 7
@@ -195,11 +240,9 @@ def predict_future(model, last_sequence, n_steps, scaler_dict, start_dt):
             dow = 7
         m = current_dt.month
 
-        # Crear nuevo timestep
         new_step = current_seq[-1].copy()
         new_step[TARGET_IDX] = pred_val
 
-        # Actualizar variables cíclicas
         new_step[HOUR_SIN_IDX] = np.sin(2 * np.pi * h / 24)
         new_step[HOUR_COS_IDX] = np.cos(2 * np.pi * h / 24)
         new_step[DOW_SIN_IDX] = np.sin(2 * np.pi * (dow - 1) / 7)
@@ -207,33 +250,23 @@ def predict_future(model, last_sequence, n_steps, scaler_dict, start_dt):
         new_step[MONTH_SIN_IDX] = np.sin(2 * np.pi * (m - 1) / 12)
         new_step[MONTH_COS_IDX] = np.cos(2 * np.pi * (m - 1) / 12)
 
-        # Actualizar lag1h
         if LAG1_IDX is not None:
             new_step[LAG1_IDX] = pred_val
 
-        # Desplazar ventana
         current_seq = np.roll(current_seq, -1, axis=0)
         current_seq[-1] = new_step
 
-    # Desescalar a kW
     return np.array(predictions_scaled) * (gap_max - gap_min) + gap_min
 
-
 def generate_synthetic_last_window(scaler_dict):
-    """
-    Genera una ventana sintética de 24h para demostración.
-    Simula un patrón realista de consumo eléctrico residencial.
-    """
     np.random.seed(42)
     window = np.zeros((LOOKBACK, len(FEATURE_COLS)), dtype=np.float32)
 
-    # Simular consumo con patrón diario (bajo de madrugada, pico mañana/noche)
     hours = np.arange(LOOKBACK)
     base_consumption = 0.5 + 0.8 * np.sin(2 * np.pi * (hours - 6) / 24) ** 2
     base_consumption += np.random.normal(0, 0.1, LOOKBACK)
     base_consumption = np.clip(base_consumption, 0.1, 3.0)
 
-    # Fecha de inicio (último día disponible del dataset: finales de noviembre 2010)
     start_dt = pd.to_datetime("2010-11-26 00:00:00")
 
     for i in range(LOOKBACK):
@@ -244,14 +277,11 @@ def generate_synthetic_last_window(scaler_dict):
             dow = 7
         m = dt.month
 
-        # Variables escaladas (valores aproximados del dataset)
         row = np.zeros(len(FEATURE_COLS))
 
-        # Global_active_power_scaled
         gap_scaled = apply_minmax_scaling(base_consumption[i], 'Global_active_power_scaled', scaler_dict)
         row[TARGET_IDX] = gap_scaled
 
-        # Lags de GAP (simulados con valores cercanos)
         for lag_col in SCALED_COLS:
             if 'lag' in lag_col and 'Global_active_power' in lag_col:
                 lag_hours = int(''.join(filter(str.isdigit, lag_col.split('lag')[1])))
@@ -259,34 +289,27 @@ def generate_synthetic_last_window(scaler_dict):
                 lag_val = apply_minmax_scaling(base_consumption[idx], lag_col, scaler_dict)
                 row[FEATURE_COLS.index(lag_col)] = lag_val
 
-        # Sub_metering_3 (calefacción) — mayor en invierno
         sm3 = 5.0 + 3.0 * np.sin(2 * np.pi * (h - 6) / 24) ** 2
         row[FEATURE_COLS.index('Sub_metering_3_scaled')] = apply_minmax_scaling(sm3, 'Sub_metering_3_scaled', scaler_dict)
 
-        # Sub_metering_1 y 2 (valores bajos)
         sm1 = 0.5 if 7 <= h <= 9 or 18 <= h <= 21 else 0.0
         row[FEATURE_COLS.index('Sub_metering_1_scaled')] = apply_minmax_scaling(sm1, 'Sub_metering_1_scaled', scaler_dict)
 
         sm2 = 1.0 + 0.5 * np.random.rand()
         row[FEATURE_COLS.index('Sub_metering_2_scaled')] = apply_minmax_scaling(sm2, 'Sub_metering_2_scaled', scaler_dict)
 
-        # Voltage (casi constante ~240V)
         voltage = 240 + np.random.normal(0, 2)
         row[FEATURE_COLS.index('Voltage_scaled')] = apply_minmax_scaling(voltage, 'Voltage_scaled', scaler_dict)
 
-        # Global_reactive_power
         grp = 0.1 + 0.05 * base_consumption[i]
         row[FEATURE_COLS.index('Global_reactive_power_scaled')] = apply_minmax_scaling(grp, 'Global_reactive_power_scaled', scaler_dict)
 
-        # Global_intensity
-        gi = base_consumption[i] * 4.2  # aproximadamente
+        gi = base_consumption[i] * 4.2
         row[FEATURE_COLS.index('Global_intensity_scaled')] = apply_minmax_scaling(gi, 'Global_intensity_scaled', scaler_dict)
 
-        # Unmetered_energy
         unm = base_consumption[i] * 1000 - sm1 - sm2 - sm3
         row[FEATURE_COLS.index('Unmetered_energy_scaled')] = apply_minmax_scaling(max(0, unm), 'Unmetered_energy_scaled', scaler_dict)
 
-        # Medias móviles y diferencias (aproximadas)
         row[FEATURE_COLS.index('GAP_ma24h_scaled')] = gap_scaled
         row[FEATURE_COLS.index('GAP_ma168h_scaled')] = gap_scaled
         row[FEATURE_COLS.index('GAP_std24h_scaled')] = apply_minmax_scaling(0.3, 'GAP_std24h_scaled', scaler_dict)
@@ -295,7 +318,6 @@ def generate_synthetic_last_window(scaler_dict):
         row[FEATURE_COLS.index('GAP_diff24h_scaled')] = 0.0
         row[FEATURE_COLS.index('GAP_diff168h_scaled')] = 0.0
 
-        # Variables cíclicas
         row[HOUR_SIN_IDX] = np.sin(2 * np.pi * h / 24)
         row[HOUR_COS_IDX] = np.cos(2 * np.pi * h / 24)
         row[DOW_SIN_IDX] = np.sin(2 * np.pi * (dow - 1) / 7)
@@ -303,25 +325,25 @@ def generate_synthetic_last_window(scaler_dict):
         row[MONTH_SIN_IDX] = np.sin(2 * np.pi * (m - 1) / 12)
         row[MONTH_COS_IDX] = np.cos(2 * np.pi * (m - 1) / 12)
 
-        # IsWeekend
         row[FEATURE_COLS.index('IsWeekend')] = 1.0 if dow in [1, 7] else 0.0
 
         window[i] = row
 
     return window, start_dt + pd.Timedelta(hours=LOOKBACK)
 
-
 # ============================================================
-# CARGA DE RECURSOS
+# CARGA DE RECURSOS CON MANEJO DE ERRORES
 # ============================================================
 try:
-    model = load_model()
+    model = build_and_load_model()
     scaler_dict = load_scaler()
     resumen = load_resumen()
     RESOURCES_LOADED = True
+    st.sidebar.success("✅ Modelo GRU cargado correctamente")
 except Exception as e:
-    st.error(f"❌ Error cargando recursos: {e}")
     RESOURCES_LOADED = False
+    st.sidebar.error(f"❌ Error: {str(e)}")
+    st.sidebar.info("Verifica que los archivos estén en la carpeta de la app.")
 
 # ============================================================
 # SIDEBAR
@@ -343,8 +365,9 @@ st.sidebar.info("""
 """)
 
 # ============================================================
-# PÁGINA: INICIO
+# PÁGINAS (resto del código igual que antes)
 # ============================================================
+
 if page == "🏠 Inicio":
     st.title("⚡ Predicción de Consumo Eléctrico Residencial")
     st.markdown("""
@@ -381,6 +404,8 @@ if page == "🏠 Inicio":
         st.markdown(f"""
         **Justificación:** {resumen.get('recomendacion', 'GRU ofrece el mejor balance entre precisión y eficiencia paramétrica.')}
         """)
+    else:
+        st.warning("⚠️ Modelo no cargado. Verifica los archivos en la carpeta de la app.")
 
     st.markdown("---")
     st.subheader("📋 Pipeline del Proyecto")
@@ -392,17 +417,13 @@ if page == "🏠 Inicio":
     5. **Despliegue** → Dashboard interactivo con predicciones futuras
     """)
 
-# ============================================================
-# PÁGINA: COMPARAR MODELOS
-# ============================================================
 elif page == "📊 Comparar Modelos":
     st.title("📊 Comparación de Modelos Recurrentes")
 
     if not RESOURCES_LOADED:
-        st.warning("⚠️ Recursos no cargados. Verifica los archivos en modelo_final/")
+        st.warning("⚠️ Recursos no cargados. Verifica los archivos en la carpeta de la app.")
         st.stop()
 
-    # Tabla comparativa
     st.subheader("Tabla de Métricas — Test Set (2010)")
     comparativa = resumen.get('comparativa_completa', [
         {'modelo': 'RNN', 'mae': 0.351, 'rmse': 0.502, 'r2': 0.564, 'epochs_trained': 26, 'best_val_loss': 0.045},
@@ -413,7 +434,6 @@ elif page == "📊 Comparar Modelos":
     df_comp = pd.DataFrame(comparativa)
     df_comp = df_comp[['modelo', 'mae', 'rmse', 'r2', 'epochs_trained', 'best_val_loss']]
 
-    # Destacar ganador
     def highlight_winner(row):
         if row['modelo'] == resumen.get('modelo_ganador', 'GRU'):
             return ['background-color: #d4edda'] * len(row)
@@ -421,7 +441,6 @@ elif page == "📊 Comparar Modelos":
 
     st.dataframe(df_comp.style.apply(highlight_winner, axis=1), use_container_width=True)
 
-    # Gráficos comparativos
     st.subheader("Visualización Comparativa")
 
     col1, col2 = st.columns(2)
@@ -464,7 +483,6 @@ elif page == "📊 Comparar Modelos":
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # Análisis de eficiencia
     st.subheader("Análisis de Eficiencia")
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -481,14 +499,11 @@ elif page == "📊 Comparar Modelos":
     - **GRU** 🏆: Mejor R² con ~25-30% menos parámetros que LSTM. Converge más rápido.
     """)
 
-# ============================================================
-# PÁGINA: PREDICCIONES
-# ============================================================
 elif page == "🔮 Predicciones":
     st.title("🔮 Predicciones Futuras de Consumo")
 
     if not RESOURCES_LOADED:
-        st.warning("⚠️ Modelo no cargado. Verifica modelo_gru_final.keras")
+        st.warning("⚠️ Modelo no cargado. Verifica los archivos en la carpeta de la app.")
         st.stop()
 
     st.markdown("""
@@ -497,7 +512,6 @@ elif page == "🔮 Predicciones":
     Puedes usar una **ventana sintética** (simulación) o cargar tus propios datos.
     """)
 
-    # Opciones de entrada
     input_method = st.radio(
         "Método de entrada",
         ["🎲 Generar ventana sintética", "📁 Cargar datos propios (CSV)"],
@@ -527,9 +541,7 @@ elif page == "🔮 Predicciones":
         uploaded_file = st.file_uploader("Subir CSV", type=['csv'])
         if uploaded_file is not None:
             st.warning("⚠️ Carga de CSV propio requiere preprocesamiento completo. Funcionalidad en desarrollo.")
-            # Aquí iría la lógica de preprocesamiento si el usuario sube datos crudos
 
-    # Generar predicciones si hay ventana disponible
     if 'last_window' in st.session_state:
         last_window = st.session_state['last_window']
         start_time = st.session_state['start_time']
@@ -548,7 +560,6 @@ elif page == "🔮 Predicciones":
 
             st.success("✅ Predicción completada")
 
-            # Mostrar resultados
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("Media", f"{predictions.mean():.3f} kW")
@@ -559,7 +570,6 @@ elif page == "🔮 Predicciones":
             with col4:
                 st.metric("Desv. Est.", f"{predictions.std():.3f} kW")
 
-            # Gráfico interactivo
             fig = go.Figure()
             future_hours = pd.date_range(start=start_time, periods=horizon, freq='H')
 
@@ -589,7 +599,6 @@ elif page == "🔮 Predicciones":
 
             st.plotly_chart(fig, use_container_width=True)
 
-            # Tabla de predicciones
             st.subheader("📋 Tabla de Predicciones")
             df_pred = pd.DataFrame({
                 'Fecha/Hora': future_hours,
@@ -598,7 +607,6 @@ elif page == "🔮 Predicciones":
             })
             st.dataframe(df_pred, use_container_width=True)
 
-            # Descargar predicciones
             csv = df_pred.to_csv(index=False).encode('utf-8')
             st.download_button(
                 "⬇️ Descargar predicciones (CSV)",
@@ -607,14 +615,11 @@ elif page == "🔮 Predicciones":
                 "text/csv"
             )
 
-# ============================================================
-# PÁGINA: MÉTRICAS DETALLADAS
-# ============================================================
 elif page == "📈 Métricas Detalladas":
     st.title("📈 Métricas y Rendimiento del Modelo")
 
     if not RESOURCES_LOADED:
-        st.warning("⚠️ Recursos no cargados")
+        st.warning("⚠️ Recursos no cargados. Verifica los archivos en la carpeta de la app.")
         st.stop()
 
     st.subheader("Métricas del Modelo Ganador (GRU)")
@@ -624,28 +629,19 @@ elif page == "📈 Métricas Detalladas":
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric(
-            "MAE",
-            f"{metricas.get('mae', 0.339):.4f} kW",
-            help="Error absoluto medio. En promedio, el modelo se equivoca en ±0.34 kW."
-        )
+        st.metric("MAE", f"{metricas.get('mae', 0.339):.4f} kW",
+                 help="Error absoluto medio. En promedio, el modelo se equivoca en ±0.34 kW.")
     with col2:
-        st.metric(
-            "RMSE",
-            f"{metricas.get('rmse', 0.481):.4f} kW",
-            help="Raíz del error cuadrático medio. Penaliza errores grandes."
-        )
+        st.metric("RMSE", f"{metricas.get('rmse', 0.481):.4f} kW",
+                 help="Raíz del error cuadrático medio. Penaliza errores grandes.")
     with col3:
-        st.metric(
-            "R²",
-            f"{metricas.get('r2', 0.599):.4f}",
-            help="Coeficiente de determinación. El modelo explica ~60% de la variabilidad del consumo."
-        )
+        st.metric("R²", f"{metricas.get('r2', 0.599):.4f}",
+                 help="Coeficiente de determinación. El modelo explica ~60% de la variabilidad del consumo.")
 
     st.markdown("---")
     st.subheader("Contexto del Error")
 
-    consumo_medio = 1.092  # kW, del EDA
+    consumo_medio = 1.092
     mae = metricas.get('mae', 0.339)
     error_relativo = (mae / consumo_medio) * 100
 
@@ -665,7 +661,6 @@ elif page == "📈 Métricas Detalladas":
     st.markdown("---")
     st.subheader("Comparativa de Convergencia")
 
-    # Placeholder para gráficos de convergencia (se cargarían desde history si estuvieran disponibles)
     st.info("""
     Los gráficos de convergencia (train/validation loss por época) están disponibles
     en los notebooks originales (03, 04, 05). En el dashboard se muestran las métricas finales.
@@ -684,15 +679,12 @@ elif page == "📈 Métricas Detalladas":
 
     1. **Mayor R²** ({metricas.get('r2', 0.599):.3f}): Mejor capacidad explicativa del consumo
     2. **Eficiencia paramétrica**: ~25-30% menos parámetros que LSTM
-    3. **Convergencia rápida**: {df_comp[df_comp['modelo']=='GRU']['epochs_trained'].values[0] if 'df_comp' in locals() else 23} épocas vs 26 de RNN
+    3. **Convergencia rápida**: 23 épocas vs 26 de RNN
     4. **Balance precisión/velocidad**: Métricas equivalentes a LSTM con menor costo computacional
 
     **Mejora sobre baseline (RNN):** {analisis.get('mejora_sobre_rnn_pct', 6.1)}% en R²
     """)
 
-# ============================================================
-# FOOTER
-# ============================================================
 st.sidebar.markdown("---")
 st.sidebar.caption("""
 📅 Proyecto Final — Ciencia de Datos I  
