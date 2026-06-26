@@ -1,0 +1,9 @@
+[
+  "DayOfWeek_cos",
+  "DayOfWeek_sin",
+  "Hour_cos",
+  "Hour_sin",
+  "IsWeekend",
+  "Month_cos",
+  "Month_sin"
+]

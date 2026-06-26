@@ -45,71 +45,19 @@ SCALER_PATH = os.path.join(BASE_DIR, "min_max_scaler.json")
 RESUMEN_PATH = os.path.join(BASE_DIR, "resumen_comparativa.json")
 
 # ============================================================
-# FEATURE COLUMNS (reconstruidas desde el código de los notebooks)
+# FEATURE COLUMNS (cargadas desde JSON para garantizar coincidencia exacta)
 # ============================================================
-SCALED_COLS = sorted([
-    'Global_active_power_scaled',
-    'Global_active_power_lag12h_scaled',
-    'Global_active_power_lag168h_scaled',
-    'Global_active_power_lag1h_scaled',
-    'Global_active_power_lag24h_scaled',
-    'Global_active_power_lag2h_scaled',
-    'Global_active_power_lag3h_scaled',
-    'Global_active_power_lag6h_scaled',
-    'Global_intensity_scaled',
-    'Global_reactive_power_log_scaled',
-    'Global_reactive_power_scaled',
-    'Sub_metering_1_log_scaled',
-    'Sub_metering_1_scaled',
-    'Sub_metering_2_log_scaled',
-    'Sub_metering_2_scaled',
-    'Sub_metering_3_log_scaled',
-    'Sub_metering_3_scaled',
-    'Voltage_scaled',
-    'Unmetered_energy_scaled',
-    'GAP_ma24h_scaled',
-    'GAP_ma168h_scaled',
-    'GAP_std24h_scaled',
-    'SM3_ma24h_scaled',
-    'GAP_diff1h_scaled',
-    'GAP_diff24h_scaled',
-    'GAP_diff168h_scaled',
-    'Sub_metering_1_lag1h_scaled',
-    'Sub_metering_1_lag24h_scaled',
-    'Sub_metering_1_lag168h_scaled',
-    'Sub_metering_2_lag1h_scaled',
-    'Sub_metering_2_lag24h_scaled',
-    'Sub_metering_2_lag168h_scaled',
-    'Sub_metering_3_lag1h_scaled',
-    'Sub_metering_3_lag2h_scaled',
-    'Sub_metering_3_lag3h_scaled',
-    'Sub_metering_3_lag6h_scaled',
-    'Sub_metering_3_lag12h_scaled',
-    'Sub_metering_3_lag24h_scaled',
-    'Sub_metering_3_lag168h_scaled',
-    'Voltage_lag1h_scaled',
-    'Voltage_lag2h_scaled',
-    'Voltage_lag3h_scaled',
-    'Voltage_lag6h_scaled',
-    'Voltage_lag12h_scaled',
-    'Voltage_lag24h_scaled',
-    'Voltage_lag168h_scaled',
-    'Global_reactive_power_lag1h_scaled',
-    'Global_reactive_power_lag2h_scaled',
-    'Global_reactive_power_lag3h_scaled',
-    'Global_reactive_power_lag6h_scaled',
-    'Global_reactive_power_lag12h_scaled',
-    'Global_reactive_power_lag24h_scaled',
-    'Global_reactive_power_lag168h_scaled',
-])
+FEATURE_COLS_PATH = os.path.join(BASE_DIR, "feature_columns.json")
 
-CYCLIC_COLS = [
-    'DayOfWeek_cos', 'DayOfWeek_sin',
-    'Hour_cos', 'Hour_sin',
-    'Month_cos', 'Month_sin'
-]
-
-FEATURE_COLS = SCALED_COLS + CYCLIC_COLS + ['IsWeekend']
+if os.path.exists(FEATURE_COLS_PATH):
+    with open(FEATURE_COLS_PATH, 'r') as f:
+        FEATURE_COLS = json.load(f)
+else:
+    raise FileNotFoundError(
+        f"❌ No se encontró {FEATURE_COLS_PATH}. "
+        f"Genera este archivo en Colab ejecutando:\n"
+        f"  json.dump(feature_cols, open('feature_columns.json','w'))"
+    )
 
 LOOKBACK = 24
 
@@ -122,6 +70,10 @@ DOW_COS_IDX = FEATURE_COLS.index('DayOfWeek_cos')
 MONTH_SIN_IDX = FEATURE_COLS.index('Month_sin')
 MONTH_COS_IDX = FEATURE_COLS.index('Month_cos')
 LAG1_IDX = FEATURE_COLS.index('Global_active_power_lag1h_scaled') if 'Global_active_power_lag1h_scaled' in FEATURE_COLS else None
+
+# Para compatibilidad con generate_synthetic_last_window (necesita SCALED_COLS separados)
+SCALED_COLS = [c for c in FEATURE_COLS if c.endswith('_scaled')]
+CYCLIC_COLS = [c for c in FEATURE_COLS if c in ['Hour_sin', 'Hour_cos', 'DayOfWeek_sin', 'DayOfWeek_cos', 'Month_sin', 'Month_cos']]
 
 # ============================================================
 # FUNCIÓN: RECONSTRUIR MODELO DESDE JSON + CARGAR PESOS
