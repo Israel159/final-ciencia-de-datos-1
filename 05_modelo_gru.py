@@ -53,7 +53,7 @@ from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLRO
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-print("📤 Sube el archivo preprocessed_data.zip generado en el notebook 02")
+print("Subimos el archivo preprocessed_data.zip generado en el notebook 02")
 uploaded = files.upload()
 
 """## 1. Descompresión del ZIP y lectura de datos con PySpark
@@ -182,6 +182,14 @@ X_train, y_train, feature_cols = create_sequences(train_df, LOOKBACK)
 X_val,   y_val,   _           = create_sequences(val_df, LOOKBACK)
 X_test,  y_test,  _           = create_sequences(test_df, LOOKBACK)
 
+# VERIFICACIÓN NaN/Inf
+for name, X, y in [("train", X_train, y_train), ("val", X_val, y_val), ("test", X_test, y_test)]:
+    print(f"\n{name}:")
+    print(f"  NaN en X: {np.isnan(X).sum()} | Inf en X: {np.isinf(X).sum()}")
+    print(f"  NaN en y: {np.isnan(y).sum()} | Inf en y: {np.isinf(y).sum()}")
+    assert np.isnan(X).sum() == 0, f"❌ NaN en X_{name}"
+    assert np.isinf(X).sum() == 0, f"❌ Inf en X_{name}"
+
 print(f"✅ Secuencias creadas:")
 print(f"   X_train: {X_train.shape}")
 print(f"   y_train: {y_train.shape}")
@@ -189,39 +197,265 @@ print(f"   X_val:   {X_val.shape}")
 print(f"   X_test:  {X_test.shape}")
 print(f"   Features: {len(feature_cols)}")
 
-"""## 3. Arquitectura del modelo GRU
+# ============================================================
+# GENERAR feature_columns.json DESDE EL DATASET DE ENTRENAMIENTO
+# ============================================================
 
-Se implementa una red **GRU** de dos capas con dropout:
+import json
 
-| Capa | Tipo | Unidades | Activación | Propósito |
-|---|---|---|---|---|
-| 1 | GRU | 64 | tanh | Captura de dependencias temporales con compuertas update/reset |
-| 2 | Dropout | — | — | Regularización (20%) |
-| 3 | GRU | 32 | tanh | Refinamiento de patrones profundos |
-| 4 | Dropout | — | — | Regularización (20%) |
-| 5 | Dense | 16 | relu | Capa intermedia no lineal |
-| 6 | Dense | 1 | lineal | Predicción de potencia activa escalada |
+# Usar EXACTAMENTE el mismo código que create_sequences()
+scaled_cols = [c for c in train_df.columns if c.endswith('_scaled')]
+cyclic_cols = ['Hour_sin', 'Hour_cos', 'DayOfWeek_sin', 'DayOfWeek_cos', 'Month_sin', 'Month_cos']
+feature_cols = sorted(set(scaled_cols + cyclic_cols + ['IsWeekend']))
 
-**Optimizador:** Adam (lr=0.001).  
-**Pérdida:** MSE.  
-**Métrica:** MAE.
+print(f"✅ Total features: {len(feature_cols)}")
+print(f"   Scaled cols: {len(scaled_cols)}")
+print(f"   Cyclic cols: {len(cyclic_cols)}")
+print(f"   IsWeekend: 1")
 
-GRU fusiona el cell state y hidden state de LSTM en un único vector de estado, reduciendo la complejidad paramétrica sin sacrificar capacidad de modelado en series temporales con ciclos claros.
+print(f"\n¿'Global_active_power_scaled' existe? {'Global_active_power_scaled' in feature_cols}")
+
+print(f"\nPrimeras 10 features:")
+for i, col in enumerate(feature_cols[:10]):
+    print(f"  {i}: {col}")
+
+print(f"\nÚltimas 10 features:")
+for i, col in enumerate(feature_cols[-10:], start=len(feature_cols)-10):
+    print(f"  {i}: {col}")
+
+# Guardar
+with open('/content/feature_columns.json', 'w') as f:
+    json.dump(feature_cols, f, indent=2)
+
+print(f"\n✅ Guardado: /content/feature_columns.json")
+
+# Descargar
+from google.colab import files
+files.download('/content/feature_columns.json')
+
+"""## 3. TUNING DE HIPERPARÁMETROS — GRID SEARCH MANUAL
+
+Estrategia: Probar combinaciones de hiperparámetros clave y seleccionar
+la que minimice val_loss. Se prueban:
+- lookback: [24, 48]  (horas de historia)
+- units_capa1: [64, 128]  (neuronas primera capa)
+- dropout: [0.2]  (tasa de regularización)
+- batch_size: [32]  (tamaño de lote)
+
+Total combinaciones: 2 × 2 × 1 × 1 = 4. Para reducir tiempo,
+se usa early stopping agresivo (patience=5) durante el tuning.
+"""
+
+# Fijar semillas para reproducibilidad
+tf.random.set_seed(42)
+np.random.seed(42)
+
+# VERSIÓN RÁPIDA (4 combinaciones, ~30-45 minutos)
+param_grid = {
+    'lookback': [24, 48],        # 2 valores
+    'units_capa1': [64, 128],    # 2 valores
+    'dropout': [0.2],            # 1 valor (el más común)
+    'batch_size': [32]           # 1 valor
+}
+# Total: 2 × 2 × 1 × 1 = 4 combinaciones
+
+# Almacenar resultados
+results = []
+
+print("=" * 70)
+print("GRID SEARCH — TUNING DE HIPERPARÁMETROS GRU")
+print("=" * 70)
+total_combos = len(param_grid['lookback']) * len(param_grid['units_capa1']) * len(param_grid['dropout']) * len(param_grid['batch_size'])
+print(f"Combinaciones a probar: {total_combos}")
+print("=" * 70)
+
+best_val_loss = float('inf')
+best_config = None
+best_model = None
+best_history = None
+
+combo_num = 0
+
+for lookback in param_grid['lookback']:
+    for units1 in param_grid['units_capa1']:
+        for drop in param_grid['dropout']:
+            for batch in param_grid['batch_size']:
+
+                combo_num += 1
+                print(f"\n{'='*70}")
+                print(f"COMBINACIÓN {combo_num}/{total_combos}")
+                print(f"  lookback={lookback}, units1={units1}, dropout={drop}, batch_size={batch}")
+                print(f"{'='*70}")
+
+                # ─────────────────────────────────────────
+                # 3.1 RECREAR SECUENCIAS CON NUEVO LOOKBACK
+                # ─────────────────────────────────────────
+
+                X_tr, y_tr, feat_cols = create_sequences(train_df, lookback)
+                X_va, y_va, _ = create_sequences(val_df, lookback)
+                X_te, y_te, _ = create_sequences(test_df, lookback)
+
+                # Verificación NaN/Inf
+                if np.isnan(X_tr).sum() > 0 or np.isinf(X_tr).sum() > 0:
+                    print("  ⚠️ NaN/Inf detectados, saltando combinación")
+                    continue
+
+                # ─────────────────────────────────────────
+                # 3.2 CONSTRUIR MODELO GRU CON NUEVOS PARÁMETROS
+                # ─────────────────────────────────────────
+
+                model = Sequential([
+                    GRU(units1, activation='tanh', return_sequences=True,
+                        input_shape=(lookback, len(feat_cols))),
+                    Dropout(drop),
+                    GRU(units1 // 2, activation='tanh'),  # capa 2 = mitad de capa 1
+                    Dropout(drop),
+                    Dense(16, activation='relu'),
+                    Dense(1)
+                ])
+
+                model.compile(
+                    optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+                    loss='mse',
+                    metrics=['mae']
+                )
+
+                # ─────────────────────────────────────────
+                # 3.3 ENTRENAMIENTO CON EARLY STOPPING AGRESIVO
+                # ─────────────────────────────────────────
+
+                early_tuning = EarlyStopping(
+                    monitor='val_loss',
+                    patience=5,
+                    restore_best_weights=True,
+                    verbose=0
+                )
+
+                reduce_tuning = ReduceLROnPlateau(
+                    monitor='val_loss',
+                    factor=0.5,
+                    patience=3,
+                    min_lr=1e-6,
+                    verbose=0
+                )
+
+                hist = model.fit(
+                    X_tr, y_tr,
+                    validation_data=(X_va, y_va),
+                    epochs=50,
+                    batch_size=batch,
+                    callbacks=[early_tuning, reduce_tuning],
+                    verbose=0
+                )
+
+                val_loss_min = min(hist.history['val_loss'])
+                epochs_ran = len(hist.history['loss'])
+
+                print(f"  → val_loss mínimo: {val_loss_min:.6f} (épocas: {epochs_ran})")
+
+                # Guardar resultado
+                result = {
+                    'combo': combo_num,
+                    'lookback': lookback,
+                    'units_capa1': units1,
+                    'dropout': drop,
+                    'batch_size': batch,
+                    'val_loss': val_loss_min,
+                    'epochs_ran': epochs_ran
+                }
+                results.append(result)
+
+                # Actualizar mejor modelo
+                if val_loss_min < best_val_loss:
+                    best_val_loss = val_loss_min
+                    best_config = {
+                        'lookback': lookback,
+                        'units_capa1': units1,
+                        'dropout': drop,
+                        'batch_size': batch
+                    }
+                    best_model = model
+                    best_history = hist
+                    print(f"  ⭐ NUEVO MEJOR MODELO ENCONTRADO!")
+
+                # Liberar memoria
+                del model, X_tr, y_tr, X_va, y_va, X_te, y_te
+                tf.keras.backend.clear_session()
+
+print("\n" + "=" * 70)
+print("TUNING FINALIZADO")
+print("=" * 70)
+
+# ─────────────────────────────────────────
+# 3.4 TABLA DE RESULTADOS
+# ─────────────────────────────────────────
+
+results_df = pd.DataFrame(results)
+print("\n📊 TOP 5 COMBINACIONES (menor val_loss):")
+print(results_df.nsmallest(5, 'val_loss')[['combo', 'lookback', 'units_capa1', 'dropout', 'batch_size', 'val_loss', 'epochs_ran']].to_string(index=False))
+
+print(f"\n{'='*70}")
+print("MEJOR CONFIGURACIÓN ENCONTRADA:")
+print(f"{'='*70}")
+print(f"  lookback:    {best_config['lookback']} horas")
+print(f"  units_capa1: {best_config['units_capa1']} neuronas")
+print(f"  dropout:     {best_config['dropout']}")
+print(f"  batch_size:  {best_config['batch_size']}")
+print(f"  val_loss:    {best_val_loss:.6f}")
+print(f"{'='*70}")
+
+# Guardar resultados del tuning
+with open('/content/tuning_results_gru.json', 'w') as f:
+    json.dump({
+        'all_results': results,
+        'best_config': best_config,
+        'best_val_loss': float(best_val_loss)
+    }, f, indent=2)
+
+print("\n✅ Resultados del tuning guardados: /content/tuning_results_gru.json")
+
+"""## 4. ENTRENAMIENTO FINAL CON MEJORES HIPERPARÁMETROS
+
+
 """
 
 # ============================================================
-# ARQUITECTURA GRU
+# 4. ENTRENAMIENTO FINAL CON MEJORES HIPERPARÁMETROS
 # ============================================================
 
+print("\n" + "=" * 70)
+print("ENTRENAMIENTO FINAL — MEJOR CONFIGURACIÓN GRU")
+print("=" * 70)
+
+# Recrear secuencias con el mejor lookback
+LOOKBACK = best_config['lookback']
+X_train, y_train, feature_cols = create_sequences(train_df, LOOKBACK)
+X_val, y_val, _ = create_sequences(val_df, LOOKBACK)
+X_test, y_test, _ = create_sequences(test_df, LOOKBACK)
+
+# Verificación NaN/Inf
+for name, X, y in [("train", X_train, y_train), ("val", X_val, y_val), ("test", X_test, y_test)]:
+    print(f"\n{name}:")
+    print(f"  NaN en X: {np.isnan(X).sum()} | Inf en X: {np.isinf(X).sum()}")
+    print(f"  NaN en y: {np.isnan(y).sum()} | Inf en y: {np.isinf(y).sum()}")
+    assert np.isnan(X).sum() == 0, f"❌ NaN en X_{name}"
+    assert np.isinf(X).sum() == 0, f"❌ Inf en X_{name}"
+
+print(f"\nSecuencias finales con lookback={LOOKBACK}:")
+print(f"   X_train: {X_train.shape}")
+print(f"   X_val:   {X_val.shape}")
+print(f"   X_test:  {X_test.shape}")
+
+# Construir modelo GRU final con mejores parámetros
 tf.random.set_seed(42)
 np.random.seed(42)
 
 model_gru = Sequential([
-    GRU(64, activation='tanh', return_sequences=True,
+    GRU(best_config['units_capa1'], activation='tanh', return_sequences=True,
         input_shape=(LOOKBACK, len(feature_cols))),
-    Dropout(0.2),
-    GRU(32, activation='tanh'),
-    Dropout(0.2),
+    Dropout(best_config['dropout']),
+    GRU(best_config['units_capa1'] // 2, activation='tanh'),
+    Dropout(best_config['dropout']),
     Dense(16, activation='relu'),
     Dense(1)
 ])
@@ -232,28 +466,12 @@ model_gru.compile(
     metrics=['mae']
 )
 
-print("=" * 60)
-print("ARQUITECTURA GRU")
+print("\n" + "=" * 60)
+print("ARQUITECTURA GRU — CONFIGURACIÓN FINAL")
 print("=" * 60)
 model_gru.summary()
 
-"""## 4. Entrenamiento con callbacks
-
-Mismos mecanismos de control que RNN y LSTM para garantizar comparabilidad estricta:
-- **EarlyStopping**: paciencia 10 épocas, restaura mejores pesos.
-- **ReduceLROnPlateau**: reduce lr a la mitad si estanca 5 épocas.
-- **ModelCheckpoint**: guarda el mejor modelo por `val_loss`.
-
-**Hiperparámetros:**
-- Epochs máximas: 100
-- Batch size: 32
-- Validación: año 2009
-"""
-
-# ============================================================
-# ENTRENAMIENTO
-# ============================================================
-
+# Callbacks finales (más permisivos que en tuning)
 early_stop = EarlyStopping(
     monitor='val_loss',
     patience=10,
@@ -276,12 +494,12 @@ checkpoint = ModelCheckpoint(
     verbose=1
 )
 
-print("🚀 Iniciando entrenamiento GRU...")
+print("\n🚀 Iniciando entrenamiento final GRU...")
 history = model_gru.fit(
     X_train, y_train,
     validation_data=(X_val, y_val),
     epochs=100,
-    batch_size=32,
+    batch_size=best_config['batch_size'],
     callbacks=[early_stop, reduce_lr, checkpoint],
     verbose=1
 )
@@ -339,6 +557,12 @@ y_pred_kw  = y_pred_scaled * (gap_max - gap_min) + gap_min
 mae  = mean_absolute_error(y_test_kw, y_pred_kw)
 rmse = np.sqrt(mean_squared_error(y_test_kw, y_pred_kw))
 r2   = r2_score(y_test_kw, y_pred_kw)
+def mape(y_true, y_pred):
+    """Mean Absolute Percentage Error"""
+    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+
+mape_val = mape(y_test_kw, y_pred_kw)
+
 
 print("=" * 60)
 print("MÉTRICAS DEL MODELO GRU — TEST SET (2010)")
@@ -346,6 +570,7 @@ print("=" * 60)
 print(f"MAE  : {mae:.4f} kW")
 print(f"RMSE : {rmse:.4f} kW")
 print(f"R²   : {r2:.4f}")
+print(f"MAPE : {mape_val:.2f}%")
 print("=" * 60)
 
 n_plot = 200
@@ -497,9 +722,14 @@ metrics_gru = {
     'mae': float(mae),
     'rmse': float(rmse),
     'r2': float(r2),
+    'mape': float(mape_val),
     'lookback': LOOKBACK,
+    'units_capa1': best_config['units_capa1'],
+    'dropout': best_config['dropout'],
+    'batch_size': best_config['batch_size'],
     'epochs_trained': len(history.history['loss']),
-    'best_val_loss': float(min(history.history['val_loss']))
+    'best_val_loss': float(min(history.history['val_loss'])),
+    'tuning_val_loss': float(best_val_loss)
 }
 with open('/content/metrics_gru.json', 'w') as f:
     json.dump(metrics_gru, f, indent=2)
@@ -530,3 +760,105 @@ Se selecciona **GRU** como tercera arquitectura por las siguientes razones:
 
 **Hipótesis esperada**: GRU debería obtener métricas intermedias entre RNN y LSTM, o muy cercanas a LSTM, validando que el consumo eléctrico es un problema donde la eficiencia paramétrica puede compensar la menor complejidad de compuertas.
 """
+
+# ============================================================
+# CONVERSIÓN DE MODELO .keras → Pesos .weights.h5 + Arquitectura JSON
+# NO REENTRENA. Usa TF 2.20 que ya está en Colab.
+# ============================================================
+
+from google.colab import files
+import tensorflow as tf
+import json
+
+print(f"TensorFlow version: {tf.__version__}")
+
+# 1. Subir tu modelo .keras ya entrenado
+print("📤 Sube tu modelo_gru_final.keras")
+uploaded = files.upload()
+
+# 2. Cargar el modelo
+model_path = "/content/modelo_gru_final.keras"
+model = tf.keras.models.load_model(model_path)
+print("✅ Modelo cargado correctamente")
+model.summary()
+
+# 3. Guardar SOLO los pesos (extensión obligatoria en Keras 3.x)
+model.save_weights('/content/modelo_gru_weights.weights.h5')
+print("✅ Pesos guardados: modelo_gru_weights.weights.h5")
+
+# 4. Extraer arquitectura automáticamente
+layers_config = []
+for layer in model.layers:
+    config = layer.get_config()
+    layer_info = {
+        "type": layer.__class__.__name__,
+        "name": config.get("name", layer.name),
+    }
+
+    if layer.__class__.__name__ == 'GRU':
+        layer_info["units"] = config.get("units")
+        layer_info["return_sequences"] = config.get("return_sequences", False)
+        layer_info["activation"] = config.get("activation", "tanh")
+    elif layer.__class__.__name__ == 'Dropout':
+        layer_info["rate"] = config.get("rate", 0.0)
+    elif layer.__class__.__name__ == 'Dense':
+        layer_info["units"] = config.get("units")
+        layer_info["activation"] = config.get("activation", "linear")
+
+    layers_config.append(layer_info)
+
+architecture = {
+    "input_shape": [24, 68],
+    "layers": layers_config,
+    "optimizer": {"type": "Adam", "learning_rate": 0.001},
+    "loss": "mse",
+    "metrics": ["mae"]
+}
+
+with open('/content/modelo_gru_architecture.json', 'w') as f:
+    json.dump(architecture, f, indent=2)
+
+print("✅ Arquitectura guardada: modelo_gru_architecture.json")
+
+# 5. Descargar ambos archivos
+files.download('/content/modelo_gru_weights.weights.h5')
+files.download('/content/modelo_gru_architecture.json')
+files.download('/content/tuning_results_gru.json')
+
+print("\n🎉 Listo. Sube ambos archivos a tu carpeta app_streamlit/ en GitHub")
+
+# ============================================================
+# GENERAR feature_columns.json DESDE EL DATASET DE ENTRENAMIENTO
+# ============================================================
+
+import json
+
+# Usar EXACTAMENTE el mismo código que create_sequences()
+scaled_cols = [c for c in train_df.columns if c.endswith('_scaled')]
+cyclic_cols = ['Hour_sin', 'Hour_cos', 'DayOfWeek_sin', 'DayOfWeek_cos', 'Month_sin', 'Month_cos']
+feature_cols = sorted(set(scaled_cols + cyclic_cols + ['IsWeekend']))
+
+print(f"✅ Total features: {len(feature_cols)}")
+print(f"   Scaled cols: {len(scaled_cols)}")
+print(f"   Cyclic cols: {len(cyclic_cols)}")
+print(f"   IsWeekend: 1")
+
+print(f"\n¿'Global_active_power_scaled' existe? {'Global_active_power_scaled' in feature_cols}")
+
+print(f"\nPrimeras 10 features:")
+for i, col in enumerate(feature_cols[:10]):
+    print(f"  {i}: {col}")
+
+print(f"\nÚltimas 10 features:")
+for i, col in enumerate(feature_cols[-10:], start=len(feature_cols)-10):
+    print(f"  {i}: {col}")
+
+# Guardar
+with open('/content/feature_columns.json', 'w') as f:
+    json.dump(feature_cols, f, indent=2)
+
+print(f"\n✅ Guardado: /content/feature_columns.json")
+
+# Descargar
+from google.colab import files
+files.download('/content/feature_columns.json')
