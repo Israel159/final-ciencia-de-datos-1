@@ -9,12 +9,14 @@ ejecutar predicciones futuras y mostrar métricas del modelo ganador (GRU).
 Desplegado en: Streamlit Cloud
 """
 
+import os
+os.environ["TF_USE_LEGACY_KERAS"] = "1"  # ← FORZAR Keras 2 (compatible con TF 2.15)
+
 import streamlit as st
 import numpy as np
 import pandas as pd
 import json
 import pickle
-import os
 from datetime import datetime, timedelta
 
 import tensorflow as tf
