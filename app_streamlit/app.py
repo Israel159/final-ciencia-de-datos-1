@@ -643,7 +643,7 @@ elif page == "🔮 Predicciones":
 
                     # Gráfico interactivo
                     fig = go.Figure()
-                    future_hours = pd.date_range(start=start_time, periods=horizon, freq='H')
+                    future_hours = pd.date_range(start=start_time, periods=horizon, freq='h')
 
                     fig.add_trace(go.Scatter(
                         x=future_hours,
